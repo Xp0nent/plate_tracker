@@ -155,7 +155,7 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
 
       if (platesToQuery.length > 0) {
         const { data: existing } = await supabase
-          .from('vehicles')
+          .from('plates')
           .select('plate_number, mv_file')
           .or(`plate_number.in.("${platesToQuery.join('","')}"),mv_file.in.("${mvToQuery.join('","')}")`);
 
