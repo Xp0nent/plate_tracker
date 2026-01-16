@@ -2,11 +2,11 @@ import { useState, useEffect } from 'react';
 import { 
   Box, Typography, Button, Modal, Stack, IconButton, 
   LinearProgress, Paper, MenuItem, TextField, Fade, Grid, 
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Chip
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Chip, Divider
 } from '@mui/material';
 import { 
   CloudUpload, FilePresent, FileDownload, ErrorOutline, 
-  CheckCircle, Close, Terminal, Analytics
+  CheckCircle, Close, Storage, Assessment, WarningAmber
 } from '@mui/icons-material';
 import { supabase } from '../lib/supabase'; 
 import Papa from 'papaparse';
@@ -19,8 +19,8 @@ const COLORS = {
 
 const MODAL_STYLE = {
   position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-  width: { xs: '95%', sm: 700 }, bgcolor: COLORS.paper, border: `1px solid ${COLORS.border}`, 
-  boxShadow: '0 24px 48px rgba(0,0,0,0.8)', p: 4, borderRadius: 4, color: 'white', outline: 'none',
+  width: { xs: '95%', sm: 720 }, bgcolor: COLORS.paper, border: `1px solid ${COLORS.border}`, 
+  boxShadow: '0 24px 64px rgba(0,0,0,0.8)', p: 4, borderRadius: 4, color: 'white', outline: 'none',
   maxHeight: '95vh', overflowY: 'auto'
 };
 
@@ -61,18 +61,17 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
   };
 
   const downloadReport = () => {
-    const timestamp = new Date().toISOString().split('T')[0];
-    const reportText = `IMPORT AUDIT LOG - ${timestamp}\n` +
-      `Total Records: ${stats.totalRows}\n` +
-      `Inserted: ${stats.inserted}\n` +
-      `Rejected/Duplicates: ${stats.skipped}\n\n` +
-      `REJECTED ITEMS LIST:\n` +
+    const timestamp = new Date().toLocaleString();
+    const reportText = `PLATE IMPORT AUDIT LOG\n========================\n` +
+      `Date: ${timestamp}\nTotal Records: ${stats.totalRows}\n` +
+      `Success: ${stats.inserted}\nSkipped: ${stats.skipped}\n\n` +
+      `CONFLICT DETAILS:\n` +
       detailedLogs.map((l, i) => `${i + 1}. Plate: ${l.plate} | MV: ${l.mv}`).join('\n');
 
     const blob = new Blob([reportText], { type: 'text/plain' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `Audit_Log_${timestamp}.txt`;
+    link.download = `Import_Audit_${Date.now()}.txt`;
     link.click();
   };
 
@@ -80,29 +79,26 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
     if (!selectedFile || !uploadOfficeId) return;
     setIsProcessing(true);
     setDbError(null);
-    
+    let allDuplicates = [];
     let localIns = 0;
     let localSkp = 0;
     let processedCount = 0;
-    let allDuplicates = [];
-    
+
     const statusText = batchStatus === 1 ? 'RELEASED TO DEALER' : 'FOR PICK UP AT LTO OFFICE';
 
     Papa.parse(selectedFile, {
       header: true, skipEmptyLines: true,
       chunk: async (results, parser) => {
         parser.pause();
-        const batchData = results.data.map(row => ({
-          plate_number: String(row.plate_number || '').trim().toUpperCase(),
-          mv_file: String(row.mv_file || '').trim().toUpperCase(),
-          dealer: String(row.dealer || 'N/A').trim()
-        })).filter(r => r.plate_number && r.mv_file);
-
         try {
+          const batchData = results.data.map(row => ({
+            plate_number: String(row.plate_number || '').trim().toUpperCase(),
+            mv_file: String(row.mv_file || '').trim().toUpperCase(),
+            dealer: String(row.dealer || 'N/A').trim()
+          })).filter(r => r.plate_number && r.mv_file);
+
           const { data: res, error } = await supabase.rpc('fast_csv_import', { 
-            items: batchData,
-            target_office_id: Number(uploadOfficeId),
-            target_status: statusText
+            items: batchData, target_office_id: Number(uploadOfficeId), target_status: statusText
           });
 
           if (error) throw error;
@@ -114,13 +110,12 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
 
           setStats({ totalRows: filePreview.rows, inserted: localIns, skipped: localSkp });
           setProgress(Math.min((processedCount / filePreview.rows) * 100, 100));
+          parser.resume();
         } catch (err) {
           setDbError(err.message);
           parser.abort();
           setIsProcessing(false);
-          return;
         }
-        parser.resume();
       },
       complete: () => {
         setDetailedLogs(allDuplicates);
@@ -135,123 +130,124 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
       <Fade in={open}>
         <Box sx={MODAL_STYLE}>
           {/* Header */}
-          <Stack direction="row" spacing={1.5} alignItems="center" mb={4}>
-            <Terminal sx={{ color: COLORS.accent }} />
-            <Typography variant="h6" fontWeight={900} sx={{ letterSpacing: 1 }}>
-              PLATE IMPORT ENGINE <span style={{ color: COLORS.accent, fontWeight: 400 }}>v2.4</span>
-            </Typography>
+          <Stack direction="row" justifyContent="space-between" alignItems="center" mb={4}>
+            <Box>
+                <Typography variant="overline" color={COLORS.accent} fontWeight={900} sx={{ letterSpacing: 2 }}>ADMINISTRATIVE TOOLS</Typography>
+                <Typography variant="h5" fontWeight={900}>BATCH IMPORT MANAGER</Typography>
+            </Box>
+            {!isProcessing && <IconButton onClick={onClose} sx={{ color: COLORS.textSecondary }}><Close /></IconButton>}
           </Stack>
 
           {dbError ? (
-            <Paper sx={{ p: 4, bgcolor: '#450a0a', border: `1px solid ${COLORS.danger}`, textAlign: 'center' }}>
+            <Paper sx={{ p: 4, bgcolor: 'rgba(248, 113, 113, 0.05)', border: `1px solid ${COLORS.danger}`, textAlign: 'center' }}>
                 <ErrorOutline sx={{ color: COLORS.danger, fontSize: 48, mb: 2 }} />
-                <Typography variant="h6" color={COLORS.danger} fontWeight={900}>SYSTEM EXCEPTION</Typography>
-                <Typography variant="body2" sx={{ color: '#fca5a5', mb: 3 }}>{dbError}</Typography>
-                <Button variant="contained" color="error" fullWidth onClick={resetState}>INITIALIZE RESET</Button>
+                <Typography variant="h6" color={COLORS.danger} fontWeight={900}>IMPORT FAILED</Typography>
+                <Typography variant="body2" color={COLORS.textSecondary} mb={3}>{dbError}</Typography>
+                <Button variant="contained" color="error" fullWidth onClick={resetState}>RESTART ENGINE</Button>
             </Paper>
           ) : (
             <>
-              {/* Step 1: Configuration */}
+              {/* Setup View */}
               {!isProcessing && progress === 0 && (
                 <Stack spacing={3}>
                   <Grid container spacing={2}>
                     <Grid item xs={6}>
-                      <TextField select label="TARGET OFFICE" fullWidth value={uploadOfficeId} onChange={(e) => setUploadOfficeId(e.target.value)} disabled={userRole !== 1}>
+                      <TextField select label="OFFICE ASSIGNMENT" fullWidth value={uploadOfficeId} onChange={(e) => setUploadOfficeId(e.target.value)} disabled={userRole !== 1}>
                         {offices.map((o) => <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>)}
                       </TextField>
                     </Grid>
                     <Grid item xs={6}>
-                      <TextField select label="DEFAULT STATUS" fullWidth value={batchStatus} onChange={(e) => setBatchStatus(Number(e.target.value))}>
+                      <TextField select label="INITIAL STATUS" fullWidth value={batchStatus} onChange={(e) => setBatchStatus(Number(e.target.value))}>
                         <MenuItem value={1}>RELEASED TO DEALER</MenuItem>
-                        <MenuItem value={2}>FOR PICK UP AT LTO</MenuItem>
+                        <MenuItem value={2}>PICKUP AT LTO</MenuItem>
                       </TextField>
                     </Grid>
                   </Grid>
 
                   {!selectedFile ? (
-                    <Box sx={{ 
-                      p: 8, borderRadius: 2, border: `1px dashed ${COLORS.border}`, 
-                      textAlign: 'center', bgcolor: 'rgba(255,255,255,0.01)', cursor: 'pointer',
-                      transition: '0.2s', '&:hover': { bgcolor: 'rgba(59, 130, 246, 0.05)', borderColor: COLORS.accent }
-                    }} component="label">
-                      <CloudUpload sx={{ fontSize: 48, color: COLORS.textSecondary, mb: 2 }} />
-                      <Typography variant="body1" fontWeight={600} color={COLORS.textSecondary}>Deploy CSV File</Typography>
+                    <Box sx={{ p: 6, borderRadius: 4, border: `1px dashed ${COLORS.border}`, textAlign: 'center', cursor: 'pointer', '&:hover': { bgcolor: 'rgba(59, 130, 246, 0.05)', borderColor: COLORS.accent } }} component="label">
+                      <CloudUpload sx={{ fontSize: 50, color: COLORS.accent, mb: 2 }} />
+                      <Typography variant="body1" fontWeight={700}>Click to Select CSV File</Typography>
                       <input type="file" accept=".csv" hidden onChange={handleFileSelect} />
                     </Box>
                   ) : (
                     <Paper sx={{ p: 3, bgcolor: COLORS.bg, border: `1px solid ${COLORS.accent}`, borderRadius: 2 }}>
-                      <Stack direction="row" justifyContent="space-between" mb={2}>
+                      <Stack direction="row" spacing={2} alignItems="center" mb={3}>
+                        <FilePresent sx={{ color: COLORS.accent, fontSize: 40 }} />
                         <Box>
                           <Typography variant="subtitle2" fontWeight={900}>{filePreview.name}</Typography>
                           <Typography variant="caption" color={COLORS.textSecondary}>{filePreview.rows.toLocaleString()} Records Detected</Typography>
                         </Box>
-                        <IconButton size="small" onClick={() => setSelectedFile(null)} sx={{ color: COLORS.danger }}><Close /></IconButton>
                       </Stack>
-                      <Button variant="contained" fullWidth size="large" onClick={startSync} sx={{ py: 1.5, fontWeight: 900, bgcolor: COLORS.accent }}>EXECUTE IMPORT</Button>
+                      <Button variant="contained" fullWidth size="large" onClick={startSync} sx={{ fontWeight: 900, bgcolor: COLORS.accent }}>RUN BATCH PROCESSING</Button>
                     </Paper>
                   )}
                 </Stack>
               )}
 
-              {/* Step 2: Processing */}
+              {/* Progress View */}
               {isProcessing && (
                 <Box py={6} textAlign="center">
-                  <Analytics sx={{ fontSize: 60, color: COLORS.accent, mb: 2, animation: 'pulse 2s infinite' }} />
-                  <Typography variant="h5" fontWeight={900} mb={1}>SYNCHRONIZING...</Typography>
-                  <Typography variant="body2" color={COLORS.textSecondary} mb={4}>Please wait while the engine writes to the database.</Typography>
-                  <LinearProgress variant="determinate" value={progress} sx={{ height: 8, borderRadius: 4, bgcolor: COLORS.border, '& .MuiLinearProgress-bar': { bgcolor: COLORS.accent } }} />
+                  <Storage sx={{ fontSize: 60, color: COLORS.accent, mb: 2 }} />
+                  <Typography variant="h5" fontWeight={900} mb={1}>PROCESSING DATA...</Typography>
+                  <Typography variant="body2" color={COLORS.textSecondary} mb={4}>Synchronizing with server. Do not close this window.</Typography>
+                  <LinearProgress variant="determinate" value={progress} sx={{ height: 10, borderRadius: 5, bgcolor: COLORS.border, '& .MuiLinearProgress-bar': { bgcolor: COLORS.accent } }} />
                 </Box>
               )}
 
-              {/* Step 3: Detailed Results */}
+              {/* Professional Results View */}
               {progress === 100 && !isProcessing && (
                 <Box>
-                  <Grid container spacing={2} mb={3}>
+                  <Typography variant="subtitle2" fontWeight={900} color={COLORS.textSecondary} gutterBottom>OPERATION SUMMARY</Typography>
+                  <Grid container spacing={2} mb={4}>
                     <Grid item xs={4}>
-                      <Paper sx={{ p: 2, bgcolor: COLORS.bg, borderLeft: `4px solid ${COLORS.accent}`, textAlign: 'center' }}>
-                        <Typography variant="caption" color={COLORS.textSecondary} fontWeight={800}>TOTAL</Typography>
-                        <Typography variant="h6" fontWeight={900}>{stats.totalRows}</Typography>
+                      <Paper sx={{ p: 2, bgcolor: COLORS.bg, textAlign: 'center', borderBottom: `3px solid ${COLORS.accent}` }}>
+                        <Typography variant="caption" fontWeight={900} color={COLORS.textSecondary}>TOTAL PROCESSED</Typography>
+                        <Typography variant="h5" fontWeight={900}>{stats.totalRows}</Typography>
                       </Paper>
                     </Grid>
                     <Grid item xs={4}>
-                      <Paper sx={{ p: 2, bgcolor: COLORS.bg, borderLeft: `4px solid ${COLORS.success}`, textAlign: 'center' }}>
-                        <Typography variant="caption" color={COLORS.success} fontWeight={800}>SUCCESS</Typography>
-                        <Typography variant="h6" fontWeight={900}>{stats.inserted}</Typography>
+                      <Paper sx={{ p: 2, bgcolor: COLORS.bg, textAlign: 'center', borderBottom: `3px solid ${COLORS.success}` }}>
+                        <Typography variant="caption" fontWeight={900} color={COLORS.success}>SUCCESSFULLY ADDED</Typography>
+                        <Typography variant="h5" fontWeight={900}>{stats.inserted}</Typography>
                       </Paper>
                     </Grid>
                     <Grid item xs={4}>
-                      <Paper sx={{ p: 2, bgcolor: COLORS.bg, borderLeft: `4px solid ${COLORS.warning}`, textAlign: 'center' }}>
-                        <Typography variant="caption" color={COLORS.warning} fontWeight={800}>SKIPPED</Typography>
-                        <Typography variant="h6" fontWeight={900}>{stats.skipped}</Typography>
+                      <Paper sx={{ p: 2, bgcolor: COLORS.bg, textAlign: 'center', borderBottom: `3px solid ${COLORS.warning}` }}>
+                        <Typography variant="caption" fontWeight={900} color={COLORS.warning}>REJECTED (DUPLICATES)</Typography>
+                        <Typography variant="h5" fontWeight={900}>{stats.skipped}</Typography>
                       </Paper>
                     </Grid>
                   </Grid>
 
-                  <Typography variant="overline" color={COLORS.textSecondary} fontWeight={900} sx={{ mb: 1, display: 'block' }}>Duplicate Analysis</Typography>
+                  <Stack direction="row" alignItems="center" spacing={1} mb={1}>
+                    <Assessment sx={{ fontSize: 18, color: COLORS.textSecondary }} />
+                    <Typography variant="subtitle2" fontWeight={900} color={COLORS.textSecondary}>CONFLICT LOG</Typography>
+                  </Stack>
                   
-                  <TableContainer component={Paper} sx={{ bgcolor: COLORS.bg, border: `1px solid ${COLORS.border}`, maxHeight: 250, borderRadius: 2 }}>
+                  <TableContainer component={Paper} sx={{ bgcolor: COLORS.bg, border: `1px solid ${COLORS.border}`, maxHeight: 220, borderRadius: 2 }}>
                     <Table size="small" stickyHeader>
                       <TableHead>
                         <TableRow>
                           <TableCell sx={{ bgcolor: COLORS.border, color: COLORS.textSecondary, fontWeight: 900 }}>PLATE NUMBER</TableCell>
                           <TableCell sx={{ bgcolor: COLORS.border, color: COLORS.textSecondary, fontWeight: 900 }}>MV FILE</TableCell>
-                          <TableCell sx={{ bgcolor: COLORS.border, color: COLORS.textSecondary, fontWeight: 900 }} align="right">REASON</TableCell>
+                          <TableCell sx={{ bgcolor: COLORS.border, color: COLORS.textSecondary, fontWeight: 900 }} align="right">STATUS</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
                         {detailedLogs.length > 0 ? (
-                          detailedLogs.map((row, i) => (
+                          detailedLogs.map((log, i) => (
                             <TableRow key={i}>
-                              <TableCell sx={{ color: 'white', borderBottom: `1px solid ${COLORS.border}` }}>{row.plate}</TableCell>
-                              <TableCell sx={{ color: COLORS.textSecondary, borderBottom: `1px solid ${COLORS.border}` }}>{row.mv}</TableCell>
+                              <TableCell sx={{ borderBottom: `1px solid ${COLORS.border}`, color: 'white' }}>{log.plate}</TableCell>
+                              <TableCell sx={{ borderBottom: `1px solid ${COLORS.border}`, color: COLORS.textSecondary }}>{log.mv}</TableCell>
                               <TableCell align="right" sx={{ borderBottom: `1px solid ${COLORS.border}` }}>
-                                <Chip label="EXISTING" size="small" sx={{ bgcolor: 'rgba(245, 158, 11, 0.1)', color: COLORS.warning, fontWeight: 900, fontSize: 10 }} />
+                                <Chip label="CONFLICT" size="small" sx={{ height: 20, bgcolor: 'rgba(245, 158, 11, 0.1)', color: COLORS.warning, fontWeight: 900, fontSize: 10 }} />
                               </TableCell>
                             </TableRow>
                           ))
                         ) : (
                           <TableRow>
-                            <TableCell colSpan={3} align="center" sx={{ py: 4, color: COLORS.textSecondary }}>Zero conflicts detected. Integrity check passed.</TableCell>
+                            <TableCell colSpan={3} align="center" sx={{ py: 4, color: COLORS.textSecondary }}>No data conflicts found in this batch.</TableCell>
                           </TableRow>
                         )}
                       </TableBody>
@@ -259,8 +255,8 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
                   </TableContainer>
 
                   <Stack direction="row" spacing={2} mt={4}>
-                    <Button variant="outlined" fullWidth startIcon={<FileDownload />} onClick={downloadReport} sx={{ borderColor: COLORS.border, color: 'white' }}>EXPORT AUDIT LOG</Button>
-                    <Button variant="contained" fullWidth onClick={() => { resetState(); onClose(); }} sx={{ bgcolor: COLORS.accent, fontWeight: 900 }}>FINISH</Button>
+                    <Button variant="outlined" fullWidth startIcon={<FileDownload />} onClick={downloadReport} sx={{ py: 1.5, borderColor: COLORS.border, color: 'white', fontWeight: 800 }}>AUDIT REPORT</Button>
+                    <Button variant="contained" fullWidth onClick={() => { resetState(); onClose(); }} sx={{ py: 1.5, bgcolor: COLORS.accent, fontWeight: 900 }}>DISMISS</Button>
                   </Stack>
                 </Box>
               )}
