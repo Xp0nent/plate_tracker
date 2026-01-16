@@ -22,8 +22,8 @@ const MODAL_STYLE = {
   boxShadow: '0 24px 48px rgba(0,0,0,0.6)', p: 4, borderRadius: 4, color: 'white', outline: 'none'
 };
 
-// Smaller batch size is better for multi-user concurrency to avoid locking
-const BATCH_SIZE = 500; 
+// Batch size 200 is safest for Pro instances to avoid the 8-second timeout
+const BATCH_SIZE = 200; 
 
 export default function PlateUploadModal({ open, onClose, offices = [], userRole, userBranchId, onComplete }) {
   const [isProcessing, setIsProcessing] = useState(false);
@@ -31,7 +31,10 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
   const [stats, setStats] = useState({ totalRows: 0, inserted: 0, skipped: 0 });
   const [errorLog, setErrorLog] = useState([]); 
   const [uploadOfficeId, setUploadOfficeId] = useState(userBranchId || '');
-  const [batchStatus, setBatchStatus] = useState('AVAILABLE TO PICK UP AT LTO OFFICE');
+  
+  // Value 1 = RELEASED TO DEALER, Value 2 = FOR PICK UP AT LTO OFFICE
+  const [batchStatus, setBatchStatus] = useState(1); 
+  
   const [selectedFile, setSelectedFile] = useState(null);
   const [filePreview, setFilePreview] = useState({ name: '', rows: 0 });
   const [dbError, setDbError] = useState(null);
@@ -77,7 +80,6 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
       const perRowErrors = [];
       const cleanBatch = [];
 
-      // 1. FRONT-END DEDUPLICATION
       batch.forEach(item => {
         const m = String(item.mv_file).trim().toUpperCase();
         if (processedMVRef.current.has(m)) {
@@ -88,31 +90,25 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
         }
       });
 
-      if (cleanBatch.length === 0) {
-        setErrorLog(prev => [...prev, ...perRowErrors]);
-        return { inserted: 0, skipped: batch.length };
-      }
+      if (cleanBatch.length === 0) return { inserted: 0, skipped: batch.length, perRowErrors };
 
-      // 2. CONCURRENT RPC CALL
       const { data: savedResults, error } = await supabase.rpc('sync_plates_optimized', { 
         items: cleanBatch 
       });
 
       if (error) throw error;
 
-      // 3. AUDIT MAPPING
       const savedPlates = new Set(savedResults?.map(d => d.inserted_plate) || []);
       cleanBatch.forEach(item => {
         if (!savedPlates.has(item.plate_number)) {
-          perRowErrors.push(`${item.plate_number} | ${item.mv_file} | ALREADY IN DB (CONCURRENT UPLOAD)`);
+          perRowErrors.push(`${item.plate_number} | ${item.mv_file} | ALREADY IN DB`);
         }
       });
 
-      setErrorLog(prev => [...prev, ...perRowErrors]);
-      return { inserted: savedPlates.size, skipped: batch.length - savedPlates.size };
+      return { inserted: savedPlates.size, skipped: batch.length - savedPlates.size, perRowErrors };
     } catch (err) {
       setDbError(err.message);
-      return { inserted: 0, skipped: batch.length };
+      throw err;
     }
   };
 
@@ -128,27 +124,43 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
     let count = 0;
     const finalOfficeId = Number(uploadOfficeId);
 
+    // Map numeric status back to text for DB if your DB expects text, 
+    // or keep as number if your DB uses an INT status column.
+    const statusText = batchStatus === 1 ? 'RELEASED TO DEALER' : 'FOR PICK UP AT LTO OFFICE';
+
     Papa.parse(selectedFile, {
-      header: true, skipEmptyLines: true,
+      header: true, 
+      skipEmptyLines: true,
+      chunkSize: 1024 * 256, 
       chunk: async (results, parser) => {
         parser.pause();
-        const batchData = results.data.map(row => ({
-          plate_number: String(row.plate_number || '').trim(),
-          mv_file: String(row.mv_file || '').trim(),
-          dealer: String(row.dealer || 'N/A').trim(),
-          office_id: finalOfficeId,
-          status: batchStatus
-        })).filter(r => r.plate_number && r.mv_file);
+        const data = results.data;
 
-        const res = await uploadBatch(batchData);
-        localIns += res.inserted;
-        localSkp += res.skipped;
-        count += results.data.length;
+        for (let i = 0; i < data.length; i += BATCH_SIZE) {
+          const chunk = data.slice(i, i + BATCH_SIZE);
+          const batchData = chunk.map(row => ({
+            plate_number: String(row.plate_number || '').trim(),
+            mv_file: String(row.mv_file || '').trim(),
+            dealer: String(row.dealer || 'N/A').trim(),
+            office_id: finalOfficeId,
+            status: statusText
+          })).filter(r => r.plate_number && r.mv_file);
 
-        setStats({ totalRows: filePreview.rows, inserted: localIns, skipped: localSkp });
-        setProgress((count / filePreview.rows) * 100);
-        
-        if (!dbError) parser.resume(); else parser.abort();
+          try {
+            const res = await uploadBatch(batchData);
+            localIns += res.inserted;
+            localSkp += res.skipped;
+            setErrorLog(prev => [...prev, ...res.perRowErrors]);
+            count += chunk.length;
+            setStats({ totalRows: filePreview.rows, inserted: localIns, skipped: localSkp });
+            setProgress(Math.min((count / filePreview.rows) * 100, 99));
+          } catch (err) {
+            parser.abort();
+            setIsProcessing(false);
+            return;
+          }
+        }
+        parser.resume();
       },
       complete: () => {
         setProgress(100);
@@ -162,8 +174,8 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
     <Modal open={open} onClose={isProcessing ? null : onClose}>
       <Fade in={open}>
         <Box sx={MODAL_STYLE}>
-          <Typography variant="overline" color={COLORS.accent} fontWeight={900}>CONCURRENCY-SHIELD ACTIVE</Typography>
-          <Typography variant="h5" fontWeight={900} mb={3}>MULTI-USER PLATE SYNC</Typography>
+          <Typography variant="overline" color={COLORS.accent} fontWeight={900}>PRO-TIER UPLOAD</Typography>
+          <Typography variant="h5" fontWeight={900} mb={3}>PLATE DATA SYNC</Typography>
           
           {dbError ? (
             <Paper sx={{ p: 4, bgcolor: 'rgba(248, 113, 113, 0.05)', border: `1px solid ${COLORS.danger}`, textAlign: 'center' }}>
@@ -178,6 +190,11 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
                 <Stack spacing={3}>
                   <TextField select label="TARGET OFFICE" fullWidth value={uploadOfficeId} onChange={(e) => setUploadOfficeId(e.target.value)} disabled={userRole !== 1}>
                     {offices.map((o) => <MenuItem key={o.id} value={o.id}>{o.name.toUpperCase()}</MenuItem>)}
+                  </TextField>
+
+                  <TextField select label="PLATE STATUS" fullWidth value={batchStatus} onChange={(e) => setBatchStatus(e.target.value)}>
+                    <MenuItem value={1}>RELEASED TO DEALER</MenuItem>
+                    <MenuItem value={2}>FOR PICK UP AT LTO OFFICE</MenuItem>
                   </TextField>
 
                   {!selectedFile ? (
@@ -201,20 +218,20 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
                 </Stack>
               )}
 
-              {(isProcessing || progress === 100) && (
+              {(isProcessing || progress > 0) && (
                 <Box py={2}>
                   <Typography variant="h4" fontWeight={900} textAlign="right" mb={1}>{Math.round(progress)}%</Typography>
                   <LinearProgress variant="determinate" value={progress} sx={{ height: 12, borderRadius: 6, mb: 4, bgcolor: COLORS.border, '& .MuiLinearProgress-bar': { bgcolor: COLORS.accent } }} />
                   <Grid container spacing={2} mb={4}>
                     <Grid item xs={6}>
                         <Paper sx={{ p: 2, bgcolor: COLORS.bg, border: `1px solid ${COLORS.border}`, textAlign: 'center' }}>
-                            <Typography variant="caption" color={COLORS.success} fontWeight={900}>SUCCESSFULLY SYNCED</Typography>
+                            <Typography variant="caption" color={COLORS.success} fontWeight={900}>SYNCED</Typography>
                             <Typography variant="h5" fontWeight={900}>{stats.inserted.toLocaleString()}</Typography>
                         </Paper>
                     </Grid>
                     <Grid item xs={6}>
                         <Paper sx={{ p: 2, bgcolor: COLORS.bg, border: `1px solid ${COLORS.border}`, textAlign: 'center' }}>
-                            <Typography variant="caption" color={COLORS.warning} fontWeight={900}>SKIPPED (DUPLICATES)</Typography>
+                            <Typography variant="caption" color={COLORS.warning} fontWeight={900}>SKIPPED</Typography>
                             <Typography variant="h5" fontWeight={900}>{stats.skipped.toLocaleString()}</Typography>
                         </Paper>
                     </Grid>
