@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "my-lto-tracker",
+  "compatibility_date": "2026-01-16",
+  "assets": {
+    "directory": "./dist"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
