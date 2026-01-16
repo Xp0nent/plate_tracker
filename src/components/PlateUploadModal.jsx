@@ -5,8 +5,7 @@ import {
 } from '@mui/material';
 import { 
   CloudUpload, CheckCircle, Close, FilePresent, 
-  Refresh, FileDownload, Speed, ErrorOutline,
-  FindInPage, AssignmentLate
+  Refresh, FileDownload, Speed, ErrorOutline
 } from '@mui/icons-material';
 import { supabase } from '../lib/supabase'; 
 import Papa from 'papaparse';
@@ -65,15 +64,14 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
   };
 
   const downloadAuditLog = () => {
-    // PURE DATA FORMAT: PLATE | MV | REASON
-    const reportHeader = `PLATE NUMBER   | MV FILE NUMBER  | REJECTION REASON\n` + 
+    const reportHeader = `PLATE NUMBER    | MV FILE NUMBER  | REJECTION REASON\n` + 
                          `------------------------------------------------------------\n`;
 
     const blob = new Blob([reportHeader + errorLog.join('\n')], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `Reconciliation_Report_${selectedFile?.name.replace('.csv', '')}.txt`;
+    link.download = `Audit_Report_${new Date().toISOString().split('T')[0]}.txt`;
     link.click();
   };
 
@@ -82,15 +80,15 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
       const perRowErrors = [];
       const cleanBatch = [];
 
-      // 1. Internal CSV Check (Vice-Versa: Plate or MV Duplicate)
+      // 1. Local Duplicate Check (Prevention of internal file conflicts)
       batch.forEach(item => {
         const p = String(item.plate_number).trim().toUpperCase();
         const m = String(item.mv_file).trim().toUpperCase();
 
         if (processedPlatesRef.current.has(p)) {
-          perRowErrors.push(`${p.padEnd(15)} | ${m.padEnd(15)} | DUPLICATE PLATE IN FILE`);
+          perRowErrors.push(`${p.padEnd(15)} | ${m.padEnd(15)} | FILE DUP (PLATE)`);
         } else if (processedMVRef.current.has(m)) {
-          perRowErrors.push(`${p.padEnd(15)} | ${m.padEnd(15)} | DUPLICATE MV FILE IN FILE`);
+          perRowErrors.push(`${p.padEnd(15)} | ${m.padEnd(15)} | FILE DUP (MV FILE)`);
         } else {
           processedPlatesRef.current.add(p);
           processedMVRef.current.add(m);
@@ -103,17 +101,19 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
         return { inserted: 0, skipped: batch.length };
       }
 
-      // 2. Database Sync (High Speed RPC)
-      const { data: savedResults, error } = await supabase.rpc('sync_plates_optimized', { items: cleanBatch });
+      // 2. Database Sync via RPC
+      const { data: savedResults, error } = await supabase.rpc('sync_plates_optimized', { 
+        items: cleanBatch 
+      });
+      
       if (error) throw error;
 
-      // Extract successful plate numbers
+      // 3. Identify exactly which rows were rejected by DB constraints
       const savedPlates = new Set(savedResults.map(d => d.inserted_plate));
       
-      // 3. Identify exactly which row was rejected by DB
       cleanBatch.forEach(item => {
         if (!savedPlates.has(item.plate_number)) {
-          perRowErrors.push(`${item.plate_number.padEnd(15)} | ${item.mv_file.padEnd(15)} | ALREADY EXISTS IN DATABASE`);
+          perRowErrors.push(`${item.plate_number.padEnd(15)} | ${item.mv_file.padEnd(15)} | DB DUP (ALREADY EXISTS)`);
         }
       });
 
@@ -255,7 +255,7 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
                     <ResultCard label="SKIPPED" value={stats.skipped} color={COLORS.warning} />
                   </Grid>
                   <Stack direction="row" spacing={2}>
-                    <Button variant="outlined" fullWidth startIcon={<FileDownload />} onClick={downloadAuditLog} sx={{ color: 'white', borderColor: COLORS.border, fontWeight: 800 }}>GET RECONCILIATION REPORT</Button>
+                    <Button variant="outlined" fullWidth startIcon={<FileDownload />} onClick={downloadAuditLog} sx={{ color: 'white', borderColor: COLORS.border, fontWeight: 800 }}>AUDIT REPORT</Button>
                     <Button variant="contained" fullWidth onClick={() => { resetState(); onClose(); }} sx={{ fontWeight: 900, bgcolor: COLORS.accent }}>CLOSE</Button>
                   </Stack>
                 </Box>
@@ -268,7 +268,7 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
   );
 }
 
-function StatBox({ label, value, color = 'white' }) {
+function StatBox({ label, value, color }) {
     return (
         <Grid item xs={6}>
             <Paper sx={{ p: 2, bgcolor: COLORS.bg, border: `1px solid ${COLORS.border}`, textAlign: 'center' }}>
