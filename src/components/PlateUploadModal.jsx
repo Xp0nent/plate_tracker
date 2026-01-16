@@ -1,11 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { 
   Box, Typography, Button, Modal, Stack, IconButton, 
-  LinearProgress, Paper, MenuItem, TextField, Fade, Divider, Grid
+  LinearProgress, Paper, MenuItem, TextField, Fade, Grid
 } from '@mui/material';
 import { 
-  CloudUpload, CheckCircle, Close, FilePresent, 
-  Refresh, FileDownload, Speed, ErrorOutline
+  CloudUpload, FilePresent, FileDownload, ErrorOutline, CheckCircle, Close
 } from '@mui/icons-material';
 import { supabase } from '../lib/supabase'; 
 import Papa from 'papaparse';
@@ -22,8 +21,7 @@ const MODAL_STYLE = {
   boxShadow: '0 24px 48px rgba(0,0,0,0.6)', p: 4, borderRadius: 4, color: 'white', outline: 'none'
 };
 
-// Batch size 200 is safest for Pro instances to avoid the 8-second timeout
-const BATCH_SIZE = 200; 
+const BATCH_SIZE = 500;
 
 export default function PlateUploadModal({ open, onClose, offices = [], userRole, userBranchId, onComplete }) {
   const [isProcessing, setIsProcessing] = useState(false);
@@ -32,7 +30,7 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
   const [errorLog, setErrorLog] = useState([]); 
   const [uploadOfficeId, setUploadOfficeId] = useState(userBranchId || '');
   
-  // Value 1 = RELEASED TO DEALER, Value 2 = FOR PICK UP AT LTO OFFICE
+  // State holds the numeric value (1 or 2)
   const [batchStatus, setBatchStatus] = useState(1); 
   
   const [selectedFile, setSelectedFile] = useState(null);
@@ -65,47 +63,20 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
     });
   };
 
-  const downloadAuditLog = () => {
-    const reportHeader = `PLATE | MV FILE | REJECTION REASON\n-----------------------------------\n`;
-    const blob = new Blob([reportHeader + errorLog.join('\n')], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `Audit_${new Date().getTime()}.txt`;
-    link.click();
-  };
-
-  const uploadBatch = async (batch) => {
+  const uploadBatch = async (batch, statusText) => {
     try {
-      const perRowErrors = [];
-      const cleanBatch = [];
-
-      batch.forEach(item => {
-        const m = String(item.mv_file).trim().toUpperCase();
-        if (processedMVRef.current.has(m)) {
-          perRowErrors.push(`${item.plate_number} | ${m} | DUPLICATE IN YOUR FILE`);
-        } else {
-          processedMVRef.current.add(m);
-          cleanBatch.push(item);
-        }
-      });
-
-      if (cleanBatch.length === 0) return { inserted: 0, skipped: batch.length, perRowErrors };
-
-      const { data: savedResults, error } = await supabase.rpc('sync_plates_optimized', { 
-        items: cleanBatch 
+      const { data, error } = await supabase.rpc('fast_csv_import', { 
+        items: batch,
+        target_office_id: Number(uploadOfficeId),
+        target_status: statusText
       });
 
       if (error) throw error;
 
-      const savedPlates = new Set(savedResults?.map(d => d.inserted_plate) || []);
-      cleanBatch.forEach(item => {
-        if (!savedPlates.has(item.plate_number)) {
-          perRowErrors.push(`${item.plate_number} | ${item.mv_file} | ALREADY IN DB`);
-        }
-      });
-
-      return { inserted: savedPlates.size, skipped: batch.length - savedPlates.size, perRowErrors };
+      return { 
+        inserted: data.inserted, 
+        skipped: data.skipped
+      };
     } catch (err) {
       setDbError(err.message);
       throw err;
@@ -121,39 +92,37 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
 
     let localIns = 0;
     let localSkp = 0;
-    let count = 0;
-    const finalOfficeId = Number(uploadOfficeId);
-
-    // Map numeric status back to text for DB if your DB expects text, 
-    // or keep as number if your DB uses an INT status column.
+    let processedCount = 0;
+    
+    // Convert numeric value (1 or 2) to the string expected by DB
     const statusText = batchStatus === 1 ? 'RELEASED TO DEALER' : 'FOR PICK UP AT LTO OFFICE';
 
     Papa.parse(selectedFile, {
       header: true, 
       skipEmptyLines: true,
-      chunkSize: 1024 * 256, 
+      chunkSize: 1024 * 512,
       chunk: async (results, parser) => {
         parser.pause();
         const data = results.data;
 
         for (let i = 0; i < data.length; i += BATCH_SIZE) {
           const chunk = data.slice(i, i + BATCH_SIZE);
+          
           const batchData = chunk.map(row => ({
-            plate_number: String(row.plate_number || '').trim(),
-            mv_file: String(row.mv_file || '').trim(),
-            dealer: String(row.dealer || 'N/A').trim(),
-            office_id: finalOfficeId,
-            status: statusText
+            plate_number: String(row.plate_number || '').trim().toUpperCase(),
+            mv_file: String(row.mv_file || '').trim().toUpperCase(),
+            dealer: String(row.dealer || 'N/A').trim()
           })).filter(r => r.plate_number && r.mv_file);
 
           try {
-            const res = await uploadBatch(batchData);
+            const res = await uploadBatch(batchData, statusText);
             localIns += res.inserted;
             localSkp += res.skipped;
-            setErrorLog(prev => [...prev, ...res.perRowErrors]);
-            count += chunk.length;
+            processedCount += chunk.length;
+
             setStats({ totalRows: filePreview.rows, inserted: localIns, skipped: localSkp });
-            setProgress(Math.min((count / filePreview.rows) * 100, 99));
+            setProgress(Math.min((processedCount / filePreview.rows) * 100, 99));
+
           } catch (err) {
             parser.abort();
             setIsProcessing(false);
@@ -188,11 +157,24 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
             <>
               {!isProcessing && progress === 0 && (
                 <Stack spacing={3}>
-                  <TextField select label="TARGET OFFICE" fullWidth value={uploadOfficeId} onChange={(e) => setUploadOfficeId(e.target.value)} disabled={userRole !== 1}>
+                  <TextField 
+                    select 
+                    label="TARGET OFFICE" 
+                    fullWidth 
+                    value={uploadOfficeId} 
+                    onChange={(e) => setUploadOfficeId(e.target.value)} 
+                    disabled={userRole !== 1}
+                  >
                     {offices.map((o) => <MenuItem key={o.id} value={o.id}>{o.name.toUpperCase()}</MenuItem>)}
                   </TextField>
 
-                  <TextField select label="PLATE STATUS" fullWidth value={batchStatus} onChange={(e) => setBatchStatus(e.target.value)}>
+                  <TextField 
+                    select 
+                    label="PLATE STATUS" 
+                    fullWidth 
+                    value={batchStatus} 
+                    onChange={(e) => setBatchStatus(Number(e.target.value))} // Ensure value stays numeric
+                  >
                     <MenuItem value={1}>RELEASED TO DEALER</MenuItem>
                     <MenuItem value={2}>FOR PICK UP AT LTO OFFICE</MenuItem>
                   </TextField>
@@ -211,6 +193,9 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
                                 <Typography variant="subtitle1" fontWeight={800}>{filePreview.name}</Typography>
                                 <Typography variant="caption" color={COLORS.textSecondary}>{filePreview.rows.toLocaleString()} Rows</Typography>
                             </Box>
+                            <IconButton onClick={() => setSelectedFile(null)} size="small" sx={{ color: COLORS.danger }}>
+                                <Close />
+                            </IconButton>
                         </Stack>
                         <Button variant="contained" fullWidth size="large" onClick={startSync} sx={{ mt: 4, py: 2, fontWeight: 900, bgcolor: COLORS.accent }}>START ATOMIC SYNC</Button>
                     </Paper>
@@ -218,30 +203,39 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
                 </Stack>
               )}
 
-              {(isProcessing || progress > 0) && (
+              {(isProcessing || (progress > 0 && progress < 100)) && (
                 <Box py={2}>
-                  <Typography variant="h4" fontWeight={900} textAlign="right" mb={1}>{Math.round(progress)}%</Typography>
+                  <Stack direction="row" justifyContent="space-between" alignItems="flex-end" mb={1}>
+                     <Typography variant="body2" color={COLORS.textSecondary} fontWeight={700}>SYNCING DATA...</Typography>
+                     <Typography variant="h4" fontWeight={900}>{Math.round(progress)}%</Typography>
+                  </Stack>
                   <LinearProgress variant="determinate" value={progress} sx={{ height: 12, borderRadius: 6, mb: 4, bgcolor: COLORS.border, '& .MuiLinearProgress-bar': { bgcolor: COLORS.accent } }} />
-                  <Grid container spacing={2} mb={4}>
+                  
+                  <Grid container spacing={2}>
                     <Grid item xs={6}>
                         <Paper sx={{ p: 2, bgcolor: COLORS.bg, border: `1px solid ${COLORS.border}`, textAlign: 'center' }}>
-                            <Typography variant="caption" color={COLORS.success} fontWeight={900}>SYNCED</Typography>
+                            <Typography variant="caption" color={COLORS.success} fontWeight={900}>INSERTED</Typography>
                             <Typography variant="h5" fontWeight={900}>{stats.inserted.toLocaleString()}</Typography>
                         </Paper>
                     </Grid>
                     <Grid item xs={6}>
                         <Paper sx={{ p: 2, bgcolor: COLORS.bg, border: `1px solid ${COLORS.border}`, textAlign: 'center' }}>
-                            <Typography variant="caption" color={COLORS.warning} fontWeight={900}>SKIPPED</Typography>
+                            <Typography variant="caption" color={COLORS.warning} fontWeight={900}>DUPLICATES</Typography>
                             <Typography variant="h5" fontWeight={900}>{stats.skipped.toLocaleString()}</Typography>
                         </Paper>
                     </Grid>
                   </Grid>
-                  {progress === 100 && (
-                    <Stack direction="row" spacing={2}>
-                      <Button variant="outlined" fullWidth startIcon={<FileDownload />} onClick={downloadAuditLog} sx={{ color: 'white', borderColor: COLORS.border }}>AUDIT LOG</Button>
-                      <Button variant="contained" fullWidth onClick={() => { resetState(); onClose(); }} sx={{ bgcolor: COLORS.accent }}>CLOSE</Button>
-                    </Stack>
-                  )}
+                </Box>
+              )}
+
+              {progress === 100 && !isProcessing && (
+                <Box textAlign="center" py={2}>
+                  <CheckCircle sx={{ fontSize: 60, color: COLORS.success, mb: 2 }} />
+                  <Typography variant="h5" fontWeight={900} mb={1}>IMPORT SUCCESSFUL</Typography>
+                  <Typography variant="body2" color={COLORS.textSecondary} mb={4}>
+                    Processed {stats.totalRows.toLocaleString()} rows.
+                  </Typography>
+                  <Button variant="contained" fullWidth onClick={() => { resetState(); onClose(); }} sx={{ bgcolor: COLORS.accent }}>COMPLETE</Button>
                 </Box>
               )}
             </>
