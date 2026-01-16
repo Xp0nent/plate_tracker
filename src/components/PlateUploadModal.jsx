@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { 
   Box, Typography, Button, Modal, Stack, IconButton, 
-  LinearProgress, Paper, MenuItem, TextField, Fade, Grid
+  LinearProgress, Paper, MenuItem, TextField, Fade, Grid, Divider
 } from '@mui/material';
 import { 
-  CloudUpload, FilePresent, FileDownload, ErrorOutline, CheckCircle, Close
+  CloudUpload, FilePresent, FileDownload, ErrorOutline, CheckCircle, Close, ListAlt
 } from '@mui/icons-material';
 import { supabase } from '../lib/supabase'; 
 import Papa from 'papaparse';
@@ -18,7 +18,8 @@ const COLORS = {
 const MODAL_STYLE = {
   position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
   width: { xs: '95%', sm: 600 }, bgcolor: COLORS.paper, border: `1px solid ${COLORS.border}`, 
-  boxShadow: '0 24px 48px rgba(0,0,0,0.6)', p: 4, borderRadius: 4, color: 'white', outline: 'none'
+  boxShadow: '0 24px 48px rgba(0,0,0,0.6)', p: 4, borderRadius: 4, color: 'white', outline: 'none',
+  maxHeight: '90vh', overflowY: 'auto'
 };
 
 const BATCH_SIZE = 500;
@@ -27,17 +28,12 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [stats, setStats] = useState({ totalRows: 0, inserted: 0, skipped: 0 });
-  const [errorLog, setErrorLog] = useState([]); 
+  const [detailedLogs, setDetailedLogs] = useState([]); // New state for report
   const [uploadOfficeId, setUploadOfficeId] = useState(userBranchId || '');
-  
-  // State holds the numeric value (1 or 2)
   const [batchStatus, setBatchStatus] = useState(1); 
-  
   const [selectedFile, setSelectedFile] = useState(null);
   const [filePreview, setFilePreview] = useState({ name: '', rows: 0 });
   const [dbError, setDbError] = useState(null);
-
-  const processedMVRef = useRef(new Set());
 
   useEffect(() => {
     if (userBranchId && open) setUploadOfficeId(userBranchId);
@@ -48,9 +44,8 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
     setProgress(0);
     setStats({ totalRows: 0, inserted: 0, skipped: 0 });
     setSelectedFile(null);
-    setErrorLog([]);
+    setDetailedLogs([]);
     setDbError(null);
-    processedMVRef.current = new Set();
   };
 
   const handleFileSelect = (e) => {
@@ -63,6 +58,37 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
     });
   };
 
+  const downloadReport = () => {
+    const timestamp = new Date().toLocaleString();
+    const officeName = offices.find(o => o.id === uploadOfficeId)?.name || 'Unknown';
+    
+    let reportContent = `PLATE RECORD IMPORT REPORT\n`;
+    reportContent += `Generated: ${timestamp}\n`;
+    reportContent += `Target Office: ${officeName}\n`;
+    reportContent += `-------------------------------------------\n`;
+    reportContent += `Total Rows Processed: ${stats.totalRows}\n`;
+    reportContent += `Successfully Inserted: ${stats.inserted}\n`;
+    reportContent += `Duplicates Skipped: ${stats.skipped}\n`;
+    reportContent += `-------------------------------------------\n\n`;
+    reportContent += `DETAILED DUPLICATE LOG:\n`;
+    
+    if (detailedLogs.length === 0) {
+      reportContent += `No duplicates found. All records were unique.\n`;
+    } else {
+      detailedLogs.forEach((item, index) => {
+        reportContent += `${index + 1}. PLATE: ${item.plate} | MV FILE: ${item.mv}\n`;
+      });
+    }
+
+    const blob = new Blob([reportContent], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Import_Report_${new Date().getTime()}.txt`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const uploadBatch = async (batch, statusText) => {
     try {
       const { data, error } = await supabase.rpc('fast_csv_import', { 
@@ -70,13 +96,8 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
         target_office_id: Number(uploadOfficeId),
         target_status: statusText
       });
-
       if (error) throw error;
-
-      return { 
-        inserted: data.inserted, 
-        skipped: data.skipped
-      };
+      return data;
     } catch (err) {
       setDbError(err.message);
       throw err;
@@ -87,14 +108,13 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
     if (!selectedFile || !uploadOfficeId) return;
     setIsProcessing(true);
     setDbError(null);
-    setErrorLog([]);
-    processedMVRef.current = new Set();
+    setDetailedLogs([]);
 
     let localIns = 0;
     let localSkp = 0;
     let processedCount = 0;
+    let allDuplicates = [];
     
-    // Convert numeric value (1 or 2) to the string expected by DB
     const statusText = batchStatus === 1 ? 'RELEASED TO DEALER' : 'FOR PICK UP AT LTO OFFICE';
 
     Papa.parse(selectedFile, {
@@ -107,7 +127,6 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
 
         for (let i = 0; i < data.length; i += BATCH_SIZE) {
           const chunk = data.slice(i, i + BATCH_SIZE);
-          
           const batchData = chunk.map(row => ({
             plate_number: String(row.plate_number || '').trim().toUpperCase(),
             mv_file: String(row.mv_file || '').trim().toUpperCase(),
@@ -119,6 +138,10 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
             localIns += res.inserted;
             localSkp += res.skipped;
             processedCount += chunk.length;
+
+            if (res.duplicate_details) {
+                allDuplicates = [...allDuplicates, ...res.duplicate_details];
+            }
 
             setStats({ totalRows: filePreview.rows, inserted: localIns, skipped: localSkp });
             setProgress(Math.min((processedCount / filePreview.rows) * 100, 99));
@@ -132,6 +155,7 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
         parser.resume();
       },
       complete: () => {
+        setDetailedLogs(allDuplicates);
         setProgress(100);
         setIsProcessing(false);
         if (onComplete) onComplete();
@@ -158,10 +182,7 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
               {!isProcessing && progress === 0 && (
                 <Stack spacing={3}>
                   <TextField 
-                    select 
-                    label="TARGET OFFICE" 
-                    fullWidth 
-                    value={uploadOfficeId} 
+                    select label="TARGET OFFICE" fullWidth value={uploadOfficeId} 
                     onChange={(e) => setUploadOfficeId(e.target.value)} 
                     disabled={userRole !== 1}
                   >
@@ -169,11 +190,8 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
                   </TextField>
 
                   <TextField 
-                    select 
-                    label="PLATE STATUS" 
-                    fullWidth 
-                    value={batchStatus} 
-                    onChange={(e) => setBatchStatus(Number(e.target.value))} // Ensure value stays numeric
+                    select label="PLATE STATUS" fullWidth value={batchStatus} 
+                    onChange={(e) => setBatchStatus(Number(e.target.value))}
                   >
                     <MenuItem value={1}>RELEASED TO DEALER</MenuItem>
                     <MenuItem value={2}>FOR PICK UP AT LTO OFFICE</MenuItem>
@@ -235,7 +253,21 @@ export default function PlateUploadModal({ open, onClose, offices = [], userRole
                   <Typography variant="body2" color={COLORS.textSecondary} mb={4}>
                     Processed {stats.totalRows.toLocaleString()} rows.
                   </Typography>
-                  <Button variant="contained" fullWidth onClick={() => { resetState(); onClose(); }} sx={{ bgcolor: COLORS.accent }}>COMPLETE</Button>
+                  
+                  <Stack spacing={2}>
+                    <Button 
+                      variant="outlined" 
+                      startIcon={<FileDownload />} 
+                      fullWidth 
+                      onClick={downloadReport}
+                      sx={{ py: 1.5, borderColor: COLORS.border, color: 'white', fontWeight: 700 }}
+                    >
+                      DOWNLOAD DETAILED REPORT (.TXT)
+                    </Button>
+                    <Button variant="contained" fullWidth onClick={() => { resetState(); onClose(); }} sx={{ py: 1.5, bgcolor: COLORS.accent, fontWeight: 900 }}>
+                      CLOSE WINDOW
+                    </Button>
+                  </Stack>
                 </Box>
               )}
             </>
