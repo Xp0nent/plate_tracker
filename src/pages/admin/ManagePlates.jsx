@@ -45,7 +45,6 @@ const TEXT_FIELD_STYLE = {
   '& .MuiInputLabel-root.Mui-disabled': { color: 'rgba(255,255,255,0.3)' }
 };
 
-// Replace your existing getStatusColor with this:
 const getStatusLabel = (status) => {
   const s = Number(status);
   if (s === 1) return 'FOR PICKUP';
@@ -55,8 +54,8 @@ const getStatusLabel = (status) => {
 
 const getStatusColor = (status) => {
   const s = Number(status);
-  if (s === 0) return COLORS.danger; // Released (Red)
-  if (s === 1) return COLORS.success; // Available (Green)
+  if (s === 0) return COLORS.danger; 
+  if (s === 1) return COLORS.success; 
   return COLORS.textSecondary;
 };
 
@@ -76,7 +75,9 @@ export default function ManagePlates() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
   const [editData, setEditData] = useState({ id: '', plate_number: '', mv_file: '', dealer: '', status: '', office_id: '' });
+  const [editError, setEditError] = useState('');
   const [snackbar, setSnackbar] = useState({ open: false, msg: '', type: 'success' });
 
   const userRole = Number(sessionStorage.getItem('role'));
@@ -121,32 +122,86 @@ export default function ManagePlates() {
   useEffect(() => { fetchOffices(); }, [fetchOffices]);
   useEffect(() => { fetchPlates(); }, [fetchPlates]);
 
+  const handleUpdate = async () => {
+    setIsUpdating(true);
+    setEditError('');
+    
+    const cleanPlate = editData.plate_number?.toUpperCase().trim();
+    const cleanMV = editData.mv_file?.toUpperCase().trim();
+
+    try {
+      // 1. Check for duplicates (excluding current record ID)
+      const { data: existing, error: checkError } = await supabase
+        .from('plates')
+        .select('plate_number, mv_file')
+        .or(`plate_number.eq.${cleanPlate},mv_file.eq.${cleanMV}`)
+        .not('id', 'eq', editData.id);
+
+      if (checkError) throw checkError;
+
+      if (existing && existing.length > 0) {
+        const isPlateDup = existing.some(r => r.plate_number === cleanPlate);
+        const isMVDup = existing.some(r => r.mv_file === cleanMV);
+        
+        if (isPlateDup && isMVDup) setEditError(`DUPLICATE FOUND: BOTH PLATE AND MV FILE ALREADY EXIST.`);
+        else if (isPlateDup) setEditError(`DUPLICATE FOUND: PLATE NUMBER ${cleanPlate} ALREADY EXISTS.`);
+        else if (isMVDup) setEditError(`DUPLICATE FOUND: MV FILE ${cleanMV} ALREADY EXISTS.`);
+        
+        setIsUpdating(false);
+        return;
+      }
+
+      // 2. Perform Update
+      const { id, offices, created_at, ...updates } = editData;
+      const { error: updateError } = await supabase
+        .from('plates')
+        .update({
+          ...updates,
+          plate_number: cleanPlate,
+          mv_file: cleanMV,
+          office_id: Number(updates.office_id)
+        })
+        .eq('id', id);
+
+      if (updateError) throw updateError;
+
+      setEditOpen(false); 
+      fetchPlates(); 
+      setSnackbar({ open: true, msg: 'RECORD UPDATED SUCCESSFULLY', type: 'success' }); 
+
+    } catch (err) {
+      setEditError(err.message);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const columns = useMemo(() => [
     { field: 'plate_number', headerName: 'PLATE NUMBER', flex: 1, renderCell: (p) => <Typography variant="body2" sx={{ fontWeight: 700, color: COLORS.accent }}>{p.value}</Typography> },
     { field: 'mv_file', headerName: 'MV FILE', flex: 1 },
     { field: 'dealer', headerName: 'DEALER', flex: 1 },
     { field: 'office_name', headerName: 'OFFICE', flex: 1, valueGetter: (_, row) => row.offices?.name || 'UNASSIGNED' },
-  { 
-  field: 'status', 
-  headerName: 'STATUS', 
-  width: 180, 
-  renderCell: (p) => (
-    <Chip 
-      label={getStatusLabel(p.value)} 
-      size="small" 
-      variant="outlined" 
-      sx={{ 
-        color: getStatusColor(p.value), 
-        borderColor: getStatusColor(p.value), 
-        fontWeight: 800, 
-        fontSize: '0.65rem' 
-      }} 
-    />
-  )
-},
+    { 
+      field: 'status', 
+      headerName: 'STATUS', 
+      width: 180, 
+      renderCell: (p) => (
+        <Chip 
+          label={getStatusLabel(p.value)} 
+          size="small" 
+          variant="outlined" 
+          sx={{ 
+            color: getStatusColor(p.value), 
+            borderColor: getStatusColor(p.value), 
+            fontWeight: 800, 
+            fontSize: '0.65rem' 
+          }} 
+        />
+      )
+    },
     { field: 'actions', headerName: 'ACTIONS', width: 100, sortable: false, renderCell: (params) => (
         <Stack direction="row">
-          <IconButton size="small" onClick={() => { setEditData({ ...params.row }); setEditOpen(true); }} sx={{ color: COLORS.accent }}><Edit fontSize="small" /></IconButton>
+          <IconButton size="small" onClick={() => { setEditError(''); setEditData({ ...params.row }); setEditOpen(true); }} sx={{ color: COLORS.accent }}><Edit fontSize="small" /></IconButton>
           {userRole === 1 && <IconButton size="small" onClick={() => { setItemToDelete(params.row); setDeleteOpen(true); }} sx={{ color: COLORS.danger }}><Delete fontSize="small" /></IconButton>}
         </Stack>
       )
@@ -266,23 +321,26 @@ export default function ManagePlates() {
         onComplete={fetchPlates}
       />
 
-      {/* Edit Modal - UPDATED WITH OFFICE SELECT */}
-      <Modal open={editOpen} onClose={() => setEditOpen(false)}>
+      {/* Edit Modal */}
+      <Modal open={editOpen} onClose={() => !isUpdating && setEditOpen(false)}>
         <Fade in={editOpen}>
           <Box sx={MODAL_STYLE}>
             <Stack direction="row" alignItems="center" spacing={1} mb={1}>
               <Edit sx={{ color: COLORS.accent }} />
               <Typography variant="h6" fontWeight={900}>EDIT PLATE RECORD</Typography>
             </Stack>
-            <Typography variant="caption" color={COLORS.textSecondary} display="block" mb={3}>
-              Ensure all data is accurate. Changes are logged.
-            </Typography>
+            
+            {editError && (
+              <Alert severity="error" sx={{ mb: 2, bgcolor: 'rgba(248, 113, 113, 0.1)', color: COLORS.danger, border: `1px solid ${COLORS.danger}`, fontWeight: 700 }}>
+                {editError}
+              </Alert>
+            )}
 
             <Divider sx={{ borderColor: COLORS.border, mb: 3 }} />
 
             <Stack spacing={2.5}>
-              <TextField label="PLATE NUMBER" fullWidth value={editData.plate_number} onChange={e => setEditData({...editData, plate_number: e.target.value})} sx={TEXT_FIELD_STYLE} />
-              <TextField label="MV FILE" fullWidth value={editData.mv_file} onChange={e => setEditData({...editData, mv_file: e.target.value})} sx={TEXT_FIELD_STYLE} />
+              <TextField label="PLATE NUMBER" fullWidth value={editData.plate_number} onChange={e => {setEditError(''); setEditData({...editData, plate_number: e.target.value})}} sx={TEXT_FIELD_STYLE} />
+              <TextField label="MV FILE" fullWidth value={editData.mv_file} onChange={e => {setEditError(''); setEditData({...editData, mv_file: e.target.value})}} sx={TEXT_FIELD_STYLE} />
               <TextField label="DEALER" fullWidth value={editData.dealer} onChange={e => setEditData({...editData, dealer: e.target.value})} sx={TEXT_FIELD_STYLE} />
               
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
@@ -292,9 +350,9 @@ export default function ManagePlates() {
                   fullWidth 
                   value={editData.office_id || ''} 
                   onChange={e => setEditData({...editData, office_id: e.target.value})} 
-                  disabled={userRole !== 1} // DISABLED IF NOT ADMIN
+                  disabled={userRole !== 1} 
                   sx={TEXT_FIELD_STYLE}
-                  helperText={userRole !== 1 ? "Only administrators can transfer records between offices." : ""}
+                  helperText={userRole !== 1 ? "Only administrators can transfer records." : ""}
                   FormHelperTextProps={{ sx: { color: COLORS.textSecondary, fontSize: '0.7rem' } }}
                 >
                   {offices.map((off) => (
@@ -302,42 +360,27 @@ export default function ManagePlates() {
                   ))}
                 </TextField>
 
-                {/* Inside the Edit Modal Stack */}
-<TextField 
-  select 
-  label="STATUS" 
-  fullWidth 
-  // Ensure we treat the value as a number
-  value={Number(editData.status)} 
-  onChange={e => setEditData({...editData, status: Number(e.target.value)})} 
-  sx={TEXT_FIELD_STYLE}
->
-  <MenuItem value={1}>FOR PICKUP</MenuItem>
-  <MenuItem value={0}>RELEASED TO DEALER</MenuItem>
-</TextField>
+                <TextField 
+                  select 
+                  label="STATUS" 
+                  fullWidth 
+                  value={Number(editData.status)} 
+                  onChange={e => setEditData({...editData, status: Number(e.target.value)})} 
+                  sx={TEXT_FIELD_STYLE}
+                >
+                  <MenuItem value={1}>FOR PICKUP</MenuItem>
+                  <MenuItem value={0}>RELEASED TO DEALER</MenuItem>
+                </TextField>
               </Stack>
 
               <Button 
-                variant="contained" fullWidth sx={{ py: 1.5, mt: 2, fontWeight: 900, borderRadius: 2, bgcolor: COLORS.accent }} 
-                onClick={async () => {
-                  const { id, offices, created_at, ...updates } = editData;
-                  const { error } = await supabase.from('plates').update({
-                    ...updates,
-                    plate_number: updates.plate_number?.toUpperCase().trim(),
-                    mv_file: updates.mv_file?.toUpperCase().trim(),
-                    office_id: Number(updates.office_id)
-                  }).eq('id', id);
-
-                  if (error) {
-                    setSnackbar({ open: true, msg: 'UPDATE FAILED: ' + error.message, type: 'error' });
-                  } else { 
-                    setEditOpen(false); 
-                    fetchPlates(); 
-                    setSnackbar({ open: true, msg: 'RECORD UPDATED SUCCESSFULLY', type: 'success' }); 
-                  }
-                }}
+                variant="contained" 
+                fullWidth 
+                disabled={isUpdating}
+                sx={{ py: 1.5, mt: 2, fontWeight: 900, borderRadius: 2, bgcolor: COLORS.accent }} 
+                onClick={handleUpdate}
               >
-                SAVE CHANGES
+                {isUpdating ? <CircularProgress size={24} color="inherit" /> : 'SAVE CHANGES'}
               </Button>
             </Stack>
           </Box>
