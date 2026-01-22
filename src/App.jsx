@@ -21,6 +21,14 @@ const SuperAdminRoute = ({ children }) => {
   const role = sessionStorage.getItem('role');
   return role === '1' ? children : <Navigate to="/admin" replace />;
 };
+// Temporary Polyfill for randomUUID in non-secure local contexts
+if (!window.crypto.randomUUID) {
+  window.crypto.randomUUID = function() {
+    return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+      (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+    );
+  };
+}
 
 export default function App() {
   return (
