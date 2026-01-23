@@ -80,7 +80,7 @@ export default function ClientLayout() {
             />
 
             <Typography variant="h1" sx={{ fontWeight: 800, color: '#3b82f6', fontSize: { xs: '2.5rem', md: '3.8rem' }, letterSpacing: '-0.02em', lineHeight: 1 }}>
-              TRACKER
+              QUERY
             </Typography>
           </Box>
 
