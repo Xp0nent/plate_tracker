@@ -142,7 +142,7 @@ export default function SearchForm() {
                 transition: 'all 0.3s ease'
               }}
             >
-              {loading ? <CircularProgress size={20} color="inherit" /> : cooldown > 0 ? `LOCKED: ${cooldown}S` : "SEARCH DATABASE"}
+              {loading ? <CircularProgress size={20} color="inherit" /> : cooldown > 0 ? `LOCKED: ${cooldown}S` : "SEARCH"}
             </Button>
 
             {error && <Typography sx={{ color: '#f87171', fontSize: '0.65rem', fontWeight: 800, textAlign: 'center', mt: 2 }}>{error}</Typography>}
