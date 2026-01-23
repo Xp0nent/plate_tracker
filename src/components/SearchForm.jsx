@@ -204,7 +204,7 @@ export default function SearchForm() {
                 label="STATUS" 
                 value={
                   record.status === 1 || record.status === '1'
-                    ? `AVAILABLE FOR PICK-UP. Please visit ${record.offices?.name || 'the LTO Office'} and present your original CR/OR to claim your plate.`
+                    ? `AVAILABLE FOR PICK-UP. Please visit LTO ${record.offices?.name || 'the LTO Office'} and present your original CR/OR to claim your plate.`
                     : `RELEASED TO DEALER. Please coordinate directly with ${record.dealer || 'your dealer'} for your plate.`
                 } 
                 highlight 
