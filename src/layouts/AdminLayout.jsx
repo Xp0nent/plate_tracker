@@ -168,6 +168,23 @@ export default function AdminLayout() {
                 <ListItemText primary="PLATE DATABASE" primaryTypographyProps={{ fontSize: '13px', fontWeight: '700' }} />
               </ListItemButton>
             </ListItem>
+
+            {/* --- NEW BUTTON HERE --- */}
+       {/* SHOW ONLY IF SUPER ADMIN (ROLE 1) */}
+{roleId === '1' && (
+  <ListItem disablePadding component={Link} to="/admin/no-plates" sx={{ color: 'white' }}>
+    <ListItemButton>
+      <ListItemIcon>
+        <DatabaseIcon color="error" /> 
+      </ListItemIcon>
+      <ListItemText 
+        primary="LIST OF NO PLATES" 
+        primaryTypographyProps={{ fontSize: '13px', fontWeight: '700', color: '#ef4444' }} 
+      />
+    </ListItemButton>
+  </ListItem>
+)}
+
           </List>
         </Box>
       </Drawer>

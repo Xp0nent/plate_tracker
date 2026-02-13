@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Box, Grid, Paper, Typography, CircularProgress, Button, Divider } from '@mui/material';
 import { supabase } from '../../lib/supabase';
-import { DirectionsCar, FactCheck, Group, Add, LocalShipping } from '@mui/icons-material';
+import { DirectionsCar, FactCheck, Group, Add, LocalShipping, VerifiedUser } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 
 export default function Dashboard() {
-  const [counts, setCounts] = useState({ total: 0, pickup: 0, released: 0, users: 0 });
+  const [counts, setCounts] = useState({ total: 0, pickup: 0, released: 0, users: 0, authorized: 0 });
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
   
@@ -32,7 +32,7 @@ export default function Dashboard() {
         let pickupQuery = supabase
           .from('plates')
           .select('*', { count: 'exact', head: true })
-          .eq('status', 1); // Logic for Status 1
+          .eq('status', 1);
 
         if (userRole !== 1 && userBranchId) {
           pickupQuery = pickupQuery.eq('office_id', Number(userBranchId));
@@ -43,14 +43,20 @@ export default function Dashboard() {
         let releasedQuery = supabase
           .from('plates')
           .select('*', { count: 'exact', head: true })
-          .eq('status', 0); // Logic for Status 0
+          .eq('status', 0);
 
         if (userRole !== 1 && userBranchId) {
           releasedQuery = releasedQuery.eq('office_id', Number(userBranchId));
         }
         const { count: released } = await releasedQuery;
 
-        // --- 4. Registered Staff Count ---
+        // --- 4. For Authorization Count (no_plates table) ---
+        // Note: No branch filtering here as no_plates usually represents global registry
+        const { count: authorized } = await supabase
+          .from('no_plates')
+          .select('*', { count: 'exact', head: true });
+
+        // --- 5. Registered Staff Count ---
         let staffCount = 0;
         if (userRole === 1) {
           const { count: users } = await supabase
@@ -63,6 +69,7 @@ export default function Dashboard() {
           total: total || 0,
           pickup: pickup || 0,
           released: released || 0,
+          authorized: authorized || 0,
           users: staffCount || 0
         });
       } catch (err) {
@@ -103,39 +110,49 @@ export default function Dashboard() {
 
       {/* STAT CARDS */}
       <Grid container spacing={3} sx={{ mb: 4 }}>
-        <Grid item xs={12} md={userRole === 1 ? 3 : 4}>
+        <Grid item xs={12} sm={6} md={userRole === 1 ? 2.4 : 3}>
           <StatBox 
             title="Total Inventory" 
             val={counts.total} 
-            icon={<DirectionsCar sx={{ fontSize: 45, color: '#3b82f6' }} />} 
+            icon={<DirectionsCar sx={{ fontSize: 40, color: '#3b82f6' }} />} 
             color="#3b82f6" 
           />
         </Grid>
         
-        <Grid item xs={12} md={userRole === 1 ? 3 : 4}>
+        <Grid item xs={12} sm={6} md={userRole === 1 ? 2.4 : 3}>
           <StatBox 
             title="For Pick-up" 
             val={counts.pickup} 
-            icon={<FactCheck sx={{ fontSize: 45, color: '#10b981' }} />} 
+            icon={<FactCheck sx={{ fontSize: 40, color: '#10b981' }} />} 
             color="#10b981" 
           />
         </Grid>
 
-        <Grid item xs={12} md={userRole === 1 ? 3 : 4}>
+        <Grid item xs={12} sm={6} md={userRole === 1 ? 2.4 : 3}>
           <StatBox 
-            title="Released to Dealer" 
+            title="Released" 
             val={counts.released} 
-            icon={<LocalShipping sx={{ fontSize: 45, color: '#f59e0b' }} />} 
+            icon={<LocalShipping sx={{ fontSize: 40, color: '#f59e0b' }} />} 
             color="#f59e0b" 
           />
         </Grid>
 
+        {/* NEW STAT: FOR AUTHORIZATION */}
+        <Grid item xs={12} sm={6} md={userRole === 1 ? 2.4 : 3}>
+          <StatBox 
+            title="NO PLATE YET" 
+            val={counts.authorized} 
+            icon={<VerifiedUser sx={{ fontSize: 40, color: '#ef4444' }} />} 
+            color="#ef4444" 
+          />
+        </Grid>
+
         {userRole === 1 && (
-          <Grid item xs={12} md={3}>
+          <Grid item xs={12} sm={6} md={2.4}>
             <StatBox 
               title="System Users" 
               val={counts.users} 
-              icon={<Group sx={{ fontSize: 45, color: '#8b5cf6' }} />} 
+              icon={<Group sx={{ fontSize: 40, color: '#8b5cf6' }} />} 
               color="#8b5cf6" 
             />
           </Grid>
@@ -154,6 +171,17 @@ export default function Dashboard() {
             sx={{ py: 2, bgcolor: '#3b82f6', fontWeight: 'bold', '&:hover': { bgcolor: '#2563eb' } }}
           >
             Manage Inventory
+          </Button>
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <Button 
+            fullWidth 
+            variant="contained" 
+            startIcon={<VerifiedUser />} 
+            onClick={() => navigate('/admin/no-plates')}
+            sx={{ py: 2, bgcolor: '#ef4444', fontWeight: 'bold', '&:hover': { bgcolor: '#dc2626' } }}
+          >
+            Manage Authorization
           </Button>
         </Grid>
       </Grid>

@@ -11,17 +11,19 @@ import AdminLogin from './pages/admin/Login';
 import Dashboard from './pages/admin/Dashboard';
 import ManagePlates from './pages/admin/ManagePlates';
 import ManageUsers from './pages/admin/ManageUsers';
+import NoPlate from './pages/admin/no-plate'; // <--- 1. IMPORT ADDED
 
 // Password Recovery Pages
 import ForgotPassword from './pages/admin/ForgotPassword';
 import UpdatePassword from './pages/admin/UpdatePassword';
 
-// 2. Added Role-Based Guard for Super Admin (Role 1)
+// Role-Based Guard for Super Admin (Role 1)
 const SuperAdminRoute = ({ children }) => {
   const role = sessionStorage.getItem('role');
   return role === '1' ? children : <Navigate to="/admin" replace />;
 };
-// Temporary Polyfill for randomUUID in non-secure local contexts
+
+// Temporary Polyfill for randomUUID
 if (!window.crypto.randomUUID) {
   window.crypto.randomUUID = function() {
     return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
@@ -47,10 +49,15 @@ export default function App() {
       {/* 3. PROTECTED ADMIN SIDE */}
       <Route path="/admin" element={<ProtectedRoute />}>
         <Route element={<AdminLayout />}>
+          
           <Route index element={<Dashboard />} />
           <Route path="manage" element={<ManagePlates />} />
           
-          {/* 3. NEW: Manage Users Route (Protected by SuperAdminRoute) */}
+          {/* 2. NEW ROUTE ADDED HERE */}
+          {/* Matches the sidebar link "/admin/no-plates" */}
+          <Route path="no-plates" element={<NoPlate />} />
+
+          {/* Super Admin Only Route */}
           <Route 
             path="users" 
             element={

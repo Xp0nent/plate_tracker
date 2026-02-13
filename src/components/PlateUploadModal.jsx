@@ -231,7 +231,8 @@ export default function PlateUploadModal({ open, onClose, onComplete }) {
                       variant="outlined"
                     >
                       <MenuItem value={1}>FOR PICKUP</MenuItem>
-                      <MenuItem value={0}>RELEASED</MenuItem>
+                      <MenuItem value={0}>RELEASED TO DEALER</MenuItem>
+                      <MenuItem value={2}>CLAIMED</MenuItem>
                     </TextField>
                   </Grid>
                 </Grid>

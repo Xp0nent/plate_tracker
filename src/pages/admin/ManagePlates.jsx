@@ -9,7 +9,7 @@ import { supabase } from '../../lib/supabase';
 import { 
   Edit, Delete, Search, Refresh, 
   Assessment, AssignmentTurnedIn, Warning, 
-  CloudUpload, Business
+  CloudUpload, FilterList
 } from '@mui/icons-material';
 
 import PlateUploadModal from '../../components/PlateUploadModal';
@@ -17,7 +17,7 @@ import PlateUploadModal from '../../components/PlateUploadModal';
 const COLORS = {
   bg: '#020617', paper: '#0f172a', border: '#1e293b',
   accent: '#3b82f6', textMain: '#f8fafc', textSecondary: '#94a3b8',
-  danger: '#f87171', warning: '#f59e0b', success: '#4ade80', info: '#a855f7'
+  danger: '#f87171', warning: '#fbbf24', success: '#4ade80', info: '#a855f7'
 };
 
 const MODAL_STYLE = {
@@ -48,15 +48,19 @@ const TEXT_FIELD_STYLE = {
 const getStatusLabel = (status) => {
   const s = Number(status);
   if (s === 1) return 'FOR PICKUP';
+  if (s === 2) return 'CLAIMED';
   if (s === 0) return 'RELEASED TO DEALER';
   return 'UNKNOWN';
 };
 
 const getStatusColor = (status) => {
   const s = Number(status);
-  if (s === 0) return COLORS.danger; 
-  if (s === 1) return COLORS.success; 
-  return COLORS.textSecondary;
+  switch(s) {
+    case 0: return COLORS.warning; // Released is a transitional state
+    case 1: return COLORS.info;    // Pickup is active/pending
+    case 2: return COLORS.success; // Claimed is completed
+    default: return COLORS.textSecondary;
+  }
 };
 
 export default function ManagePlates() {
@@ -68,6 +72,7 @@ export default function ManagePlates() {
   const [localSearch, setLocalSearch] = useState(''); 
   const deferredSearch = useDeferredValue(localSearch);
   const [selectedOffice, setSelectedOffice] = useState('ALL');
+  const [selectedStatus, setSelectedStatus] = useState('ALL'); // NEW: Status filter state
   const [paginationModel, setPaginationModel] = useState({ pageSize: 25, page: 0 });
   
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -100,12 +105,19 @@ export default function ManagePlates() {
         .range(from, to)
         .order('created_at', { ascending: false });
       
+      // Filter by Office
       if (userRole === 1 && selectedOffice !== 'ALL') {
           query = query.eq('office_id', selectedOffice);
       } else if (userRole !== 1) {
           query = query.eq('office_id', Number(userBranchId));
       }
+
+      // Filter by Status (NEW)
+      if (selectedStatus !== 'ALL') {
+        query = query.eq('status', Number(selectedStatus));
+      }
       
+      // Filter by Search Text
       if (deferredSearch) {
         query = query.or(`plate_number.ilike.%${deferredSearch}%,mv_file.ilike.%${deferredSearch}%,dealer.ilike.%${deferredSearch}%`);
       }
@@ -117,7 +129,7 @@ export default function ManagePlates() {
     } catch (err) {
       setSnackbar({ open: true, msg: "FETCH ERROR: " + err.message, type: 'error' });
     } finally { setLoading(false); }
-  }, [paginationModel, deferredSearch, selectedOffice, userRole, userBranchId]);
+  }, [paginationModel, deferredSearch, selectedOffice, selectedStatus, userRole, userBranchId]);
 
   useEffect(() => { fetchOffices(); }, [fetchOffices]);
   useEffect(() => { fetchPlates(); }, [fetchPlates]);
@@ -130,7 +142,6 @@ export default function ManagePlates() {
     const cleanMV = editData.mv_file?.toUpperCase().trim();
 
     try {
-      // 1. Check for duplicates (excluding current record ID)
       const { data: existing, error: checkError } = await supabase
         .from('plates')
         .select('plate_number, mv_file')
@@ -151,7 +162,6 @@ export default function ManagePlates() {
         return;
       }
 
-      // 2. Perform Update
       const { id, offices, created_at, ...updates } = editData;
       const { error: updateError } = await supabase
         .from('plates')
@@ -194,7 +204,8 @@ export default function ManagePlates() {
             color: getStatusColor(p.value), 
             borderColor: getStatusColor(p.value), 
             fontWeight: 800, 
-            fontSize: '0.65rem' 
+            fontSize: '0.65rem',
+            bgcolor: `${getStatusColor(p.value)}10` // Subtle background tint
           }} 
         />
       )
@@ -282,6 +293,21 @@ export default function ManagePlates() {
           sx={{ ...TEXT_FIELD_STYLE, bgcolor: COLORS.paper, flex: 2 }} 
           InputProps={{ startAdornment: <Search sx={{ mr: 1, color: COLORS.textSecondary }} /> }} 
         />
+        
+        {/* NEW: Status Filter Dropdown */}
+        <TextField 
+          select size="small" 
+          value={selectedStatus} 
+          onChange={(e) => setSelectedStatus(e.target.value)} 
+          sx={{ ...TEXT_FIELD_STYLE, bgcolor: COLORS.paper, flex: 1 }}
+          InputProps={{ startAdornment: <FilterList sx={{ mr: 1, color: COLORS.textSecondary, fontSize: 18 }} /> }}
+        >
+          <MenuItem value="ALL">ALL STATUS</MenuItem>
+          <MenuItem value={1}>FOR PICKUP</MenuItem>
+          <MenuItem value={2}>CLAIMED</MenuItem>
+          <MenuItem value={0}>RELEASED TO DEALER</MenuItem>
+        </TextField>
+
         {userRole === 1 && (
           <TextField 
             select fullWidth size="small" 
@@ -369,6 +395,7 @@ export default function ManagePlates() {
                   sx={TEXT_FIELD_STYLE}
                 >
                   <MenuItem value={1}>FOR PICKUP</MenuItem>
+                  <MenuItem value={2}>CLAIMED</MenuItem>
                   <MenuItem value={0}>RELEASED TO DEALER</MenuItem>
                 </TextField>
               </Stack>
