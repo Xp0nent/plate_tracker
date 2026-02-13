@@ -246,11 +246,23 @@ export default function AuthorizationRequest() {
           </Typography>
 
           <Button 
-            fullWidth variant="contained" size="large" onClick={() => navigate('https://r5platequery.com/', { replace: true })}
-            sx={{ py: 2, borderRadius: 3, fontWeight: 900, bgcolor: '#3b82f6', '&:hover': { bgcolor: '#2563eb' } }}
-          >
-            RETURN TO HOME
-          </Button>
+  fullWidth 
+  variant="contained" 
+  size="large" 
+  onClick={() => {
+    // This forces the browser to leave the current state and load the URL fresh
+    window.location.href = 'https://r5platequery.com/';
+  }}
+  sx={{ 
+    py: 2, 
+    borderRadius: 3, 
+    fontWeight: 900, 
+    bgcolor: '#3b82f6', 
+    '&:hover': { bgcolor: '#2563eb' } 
+  }}
+>
+  RETURN TO HOME
+</Button>
         </Paper>
       </Box>
     );
