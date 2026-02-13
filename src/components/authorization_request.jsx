@@ -246,7 +246,7 @@ export default function AuthorizationRequest() {
           </Typography>
 
           <Button 
-            fullWidth variant="contained" size="large" onClick={() => navigate('/', { replace: true })}
+            fullWidth variant="contained" size="large" onClick={() => navigate('https://r5platequery.com/', { replace: true })}
             sx={{ py: 2, borderRadius: 3, fontWeight: 900, bgcolor: '#3b82f6', '&:hover': { bgcolor: '#2563eb' } }}
           >
             RETURN TO HOME
